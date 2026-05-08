@@ -201,6 +201,7 @@ def parse_price(price_str):
 
 
 def stops_label(n):
+    n = int(n)
     return "direkt" if n == 0 else f"{n} Stopp{'s' if n > 1 else ''}"
 
 
