@@ -29,7 +29,7 @@ from fast_flights import get_flights, FlightData, Passengers
 
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-PRICE_THRESHOLD  = float(os.environ.get("PRICE_THRESHOLD") or "200")
+PRICE_THRESHOLD  = float(os.environ.get("PRICE_THRESHOLD") or "150")
 
 # Suchparameter (in Code aenderbar, keine Variable noetig)
 SEARCH_WEEKS_AHEAD = 10     # Wie viele Wochen vorausschauen
