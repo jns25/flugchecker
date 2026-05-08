@@ -1,0 +1,32 @@
+name: Tägliche Flugzusammenfassung
+
+# Jeden Morgen um 07:00 UTC = 08:00 MEZ / 09:00 MESZ
+# + manuelle Ausführung zum Testen
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  daily-summary:
+    name: Top 5 Flüge abrufen und senden
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Abhaengigkeiten installieren
+        run: pip install -r requirements.txt
+
+      - name: Fluege abrufen und Zusammenfassung senden
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PRICE_THRESHOLD:  ${{ vars.PRICE_THRESHOLD }}
+        run: python scripts/check_flights.py summary

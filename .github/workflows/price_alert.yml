@@ -1,0 +1,70 @@
+name: Preis-Alert (alle 30 Min)
+
+# Alle 30 Minuten prüfen + manuelle Ausführung
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  price-alert:
+    name: Preis pruefen und ggf. Alert senden
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Abhaengigkeiten installieren
+        run: pip install -r requirements.txt
+
+      # Cooldown-Logik: Cache-Key wechselt alle 4 Stunden
+      # -> max. 1 Alert pro 4-Stunden-Block, kein Spam
+      - name: Zeit-Block berechnen
+        id: timeblock
+        run: |
+          BLOCK=$(python -c "
+          from datetime import datetime, timezone
+          d = datetime.now(tz=timezone.utc)
+          print(d.strftime('%Y%m%d') + str(d.hour // 4))
+          ")
+          echo "val=$BLOCK" >> "$GITHUB_OUTPUT"
+          echo "Zeit-Block: $BLOCK"
+
+      - name: Alert-Cache wiederherstellen (Cooldown pruefen)
+        id: alert_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: alert_triggered.txt
+          key: price-alert-${{ steps.timeblock.outputs.val }}
+
+      - name: Preis pruefen und Alert senden
+        id: flight_check
+        if: steps.alert_cache.outputs.cache-hit != 'true'
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PRICE_THRESHOLD:  ${{ vars.PRICE_THRESHOLD }}
+        run: |
+          python scripts/check_flights.py alert
+          if [ -f alert_triggered.txt ]; then
+            echo "alert_sent=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "alert_sent=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cooldown-Info (Cache-Hit)
+        if: steps.alert_cache.outputs.cache-hit == 'true'
+        run: echo "Alert-Cooldown aktiv - bereits in diesem 4h-Block gesendet."
+
+      - name: Alert-Cache speichern (Cooldown setzen)
+        if: steps.flight_check.outputs.alert_sent == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: alert_triggered.txt
+          key: price-alert-${{ steps.timeblock.outputs.val }}
