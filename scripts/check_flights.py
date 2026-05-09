@@ -21,9 +21,11 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import requests
 from datetime import date, timedelta, datetime, timezone
 from fast_flights import get_flights, FlightData, Passengers
+from fast_flights.flights_impl import TFSData
 
 # --- Konfiguration -----------------------------------------------------------
 
@@ -213,6 +215,26 @@ def weekday_de(d):
     return names[d.weekday()]
 
 
+def make_google_flights_url(out_date, ret_date):
+    """Erstellt einen direkten Google Flights Such-Link fuer das Datumspaar."""
+    try:
+        tfs = TFSData.from_interface(
+            flight_data=[
+                FlightData(date=out_date.strftime("%Y-%m-%d"), from_airport=ORIGIN,      to_airport=DESTINATION),
+                FlightData(date=ret_date.strftime("%Y-%m-%d"), from_airport=DESTINATION, to_airport=ORIGIN),
+            ],
+            trip="round-trip",
+            seat="economy",
+            passengers=Passengers(adults=1),
+        )
+        b64 = tfs.as_b64().decode("utf-8") if isinstance(tfs.as_b64(), bytes) else tfs.as_b64()
+        return f"https://www.google.com/travel/flights?tfs={urllib.parse.quote(b64)}&hl=de&curr=EUR"
+    except Exception:
+        # Fallback: einfache Google-Suche
+        return (f"https://www.google.com/travel/flights?q=Flug+{ORIGIN}+{DESTINATION}"
+                f"+{out_date.strftime('%Y-%m-%d')}")
+
+
 def format_deal(deal, rank=None):
     """Formatiert einen Deal als Telegram-Markdown-Block."""
     f        = deal["flight"]
@@ -227,6 +249,7 @@ def format_deal(deal, rank=None):
     weekend_tag  = " 🏖" if deal["is_weekend"] else ""
     ahead        = f" (+{f.arrival_time_ahead})" if f.arrival_time_ahead else ""
     delay        = f"\n  ⚠️ {f.delay}" if f.delay else ""
+    link         = make_google_flights_url(out_date, ret_date)
 
     lines = [
         f"{prefix}*{price:.0f}€* – {f.name}  {market_emoji}{weekend_tag}",
@@ -234,6 +257,7 @@ def format_deal(deal, rank=None):
         f"{weekday_de(ret_date)} {ret_date.strftime('%d.%m.')}  ({dur} {'Tag' if dur == 1 else 'Tage'})",
         f"  ✈️ Abflug: {f.departure}  |  Ankunft: {f.arrival}{ahead}",
         f"  ⏱ {f.duration}  |  {stops_label(f.stops)}{delay}",
+        f"  🔗 [Google Flights öffnen]({link})",
     ]
     return "\n".join(lines)
 
