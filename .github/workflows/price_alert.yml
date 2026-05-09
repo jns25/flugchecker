@@ -1,9 +1,9 @@
-name: Preis-Alert (alle 30 Min)
+name: Preis-Alert (alle 2 Stunden)
 
-# Alle 30 Minuten prüfen + manuelle Ausführung
+# Alle 2 Stunden prüfen + manuelle Ausführung
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 */2 * * *'
   workflow_dispatch:
 
 jobs:
