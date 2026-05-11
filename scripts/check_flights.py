@@ -496,46 +496,46 @@ def format_weekend_deal(deal, rank=None):
 
 def run_weekend():
     """
-    Wochenend-Kurztrip Scanner: Fr->Sa und Sa->So, naechste 4 Wochen.
-    Fruehfluege bevorzugt. Alert wenn unter WEEKEND_PRICE_THRESHOLD.
+    24h-Malle-Alert Scanner: Fr->Sa und Sa->So, naechste 4 Wochen.
+    Fruehfluege bevorzugt. Sendet NUR einen Alert wenn ein Deal unter
+    WEEKEND_PRICE_THRESHOLD liegt – kein Telegram bei teueren Preisen.
     """
-    print(f"Modus: Wochenend-Kurztrip (Limit: {WEEKEND_PRICE_THRESHOLD:.0f}€)")
-    deals   = search_weekend_flights()
-    now_str = datetime.now(tz=timezone.utc).strftime("%d.%m.%Y")
+    print(f"Modus: 24h-Malle-Alert! (Limit: {WEEKEND_PRICE_THRESHOLD:.0f}€)")
+    deals = search_weekend_flights()
 
     if not deals:
-        send_telegram(
-            f"🔍 *24h Malle Checker {now_str}*\n"
-            f"Keine 24h Malle-Flüge STR->PMI in den nächsten 4 Wochen gefunden."
-        )
+        print("Keine Deals gefunden.")
         return
 
-    cheapest = deals[0]["price"]
-    top5     = deals[:5]
+    best = deals[0]
+    print(f"Guenstigster Wochenend-Deal: {best['price']:.0f}EUR "
+          f"({best['outbound']} -> {best['return']})")
+
+    if best["price"] >= WEEKEND_PRICE_THRESHOLD:
+        print(f"Kein Alert: {best['price']:.0f}€ >= {WEEKEND_PRICE_THRESHOLD:.0f}€")
+        return
+
+    print("-> Alert wird gesendet!")
+    now_str = datetime.now(tz=timezone.utc).strftime("%d.%m.%Y")
+    top5    = deals[:5]
 
     header = [
-        f"🏖 *24h Malle Checker {now_str}*",
+        f"🏖 *24h MALLE ALERT! {now_str}*",
         f"STR -> PMI -> STR  |  1 Nacht  |  Fr->Sa oder Sa->So",
         f"Nächste 4 Wochen  |  Frühflüge bevorzugt  |  Alle Airlines\n",
+        f"📉 *{best['price']:.0f}€* liegt unter deinem Limit von *{WEEKEND_PRICE_THRESHOLD:.0f}€*!\n",
     ]
     body = []
     for i, deal in enumerate(top5, 1):
         body.append(format_weekend_deal(deal, rank=i))
         body.append("")
 
-    footer = []
-    if cheapest < WEEKEND_PRICE_THRESHOLD:
-        footer.append(
-            f"🚨 *GÜNSTIG!* {cheapest:.0f}€ liegt unter deinem Limit von {WEEKEND_PRICE_THRESHOLD:.0f}€!"
-        )
-
-    send_telegram("\n".join(header + body + footer))
+    send_telegram("\n".join(header + body))
 
     # Alert-Datei fuer Cooldown (separater Key vom normalen Alert-Workflow)
-    if cheapest < WEEKEND_PRICE_THRESHOLD:
-        with open("weekend_alert_triggered.txt", "w") as fh:
-            fh.write(f"{cheapest:.2f}\n{datetime.now(tz=timezone.utc).isoformat()}\n")
-        print("weekend_alert_triggered.txt geschrieben (GitHub Cooldown)")
+    with open("weekend_alert_triggered.txt", "w") as fh:
+        fh.write(f"{best['price']:.2f}\n{datetime.now(tz=timezone.utc).isoformat()}\n")
+    print("weekend_alert_triggered.txt geschrieben (GitHub Cooldown)")
 
 
 # --- Entry Point -------------------------------------------------------------
