@@ -31,8 +31,8 @@ from fast_flights.flights_impl import TFSData
 
 TELEGRAM_TOKEN          = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID        = os.environ.get("TELEGRAM_CHAT_ID", "")
-PRICE_THRESHOLD         = float(os.environ.get("PRICE_THRESHOLD") or "200")
-WEEKEND_PRICE_THRESHOLD = float(os.environ.get("WEEKEND_PRICE_THRESHOLD") or "200")
+PRICE_THRESHOLD         = float(os.environ.get("PRICE_THRESHOLD") or "120")
+WEEKEND_PRICE_THRESHOLD = float(os.environ.get("WEEKEND_PRICE_THRESHOLD") or "110")
 
 # Suchparameter (in Code aenderbar, keine Variable noetig)
 SEARCH_WEEKS_AHEAD = 10     # Wie viele Wochen vorausschauen
