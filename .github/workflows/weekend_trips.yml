@@ -1,0 +1,70 @@
+name: Wochenend-Trips (alle 2 Stunden)
+
+# Alle 2 Stunden prüfen + manuelle Ausführung
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+jobs:
+  weekend-alert:
+    name: Wochenend-Kurztrip pruefen und ggf. Alert senden
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Abhaengigkeiten installieren
+        run: pip install -r requirements.txt
+
+      # Cooldown-Logik: Cache-Key wechselt alle 4 Stunden
+      # -> max. 1 Alert pro 4-Stunden-Block, kein Spam
+      - name: Zeit-Block berechnen
+        id: timeblock
+        run: |
+          BLOCK=$(python -c "
+          from datetime import datetime, timezone
+          d = datetime.now(tz=timezone.utc)
+          print(d.strftime('%Y%m%d') + str(d.hour // 4))
+          ")
+          echo "val=$BLOCK" >> "$GITHUB_OUTPUT"
+          echo "Zeit-Block: $BLOCK"
+
+      - name: Weekend-Cache wiederherstellen (Cooldown pruefen)
+        id: weekend_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: weekend_alert_triggered.txt
+          key: weekend-alert-${{ steps.timeblock.outputs.val }}
+
+      - name: Wochenend-Trips pruefen und Alert senden
+        id: weekend_check
+        if: steps.weekend_cache.outputs.cache-hit != 'true'
+        env:
+          TELEGRAM_TOKEN:            ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:          ${{ secrets.TELEGRAM_CHAT_ID }}
+          WEEKEND_PRICE_THRESHOLD:   ${{ vars.WEEKEND_PRICE_THRESHOLD }}
+        run: |
+          python scripts/check_flights.py weekend
+          if [ -f weekend_alert_triggered.txt ]; then
+            echo "alert_sent=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "alert_sent=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cooldown-Info (Cache-Hit)
+        if: steps.weekend_cache.outputs.cache-hit == 'true'
+        run: echo "Weekend-Alert-Cooldown aktiv - bereits in diesem 4h-Block gesendet."
+
+      - name: Weekend-Cache speichern (Cooldown setzen)
+        if: steps.weekend_check.outputs.alert_sent == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: weekend_alert_triggered.txt
+          key: weekend-alert-${{ steps.timeblock.outputs.val }}

@@ -29,9 +29,10 @@ from fast_flights.flights_impl import TFSData
 
 # --- Konfiguration -----------------------------------------------------------
 
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-PRICE_THRESHOLD  = float(os.environ.get("PRICE_THRESHOLD") or "100")
+TELEGRAM_TOKEN          = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID        = os.environ.get("TELEGRAM_CHAT_ID", "")
+PRICE_THRESHOLD         = float(os.environ.get("PRICE_THRESHOLD") or "200")
+WEEKEND_PRICE_THRESHOLD = float(os.environ.get("WEEKEND_PRICE_THRESHOLD") or "200")
 
 # Suchparameter (in Code aenderbar, keine Variable noetig)
 SEARCH_WEEKS_AHEAD = 10     # Wie viele Wochen vorausschauen
@@ -354,6 +355,189 @@ def run_alert():
         print(f"Kein Alert: {best['price']:.0f}€ >= {PRICE_THRESHOLD:.0f}€")
 
 
+# --- Modus: Kurztrip-Wochenende (1 Nacht, Fr->Sa oder Sa->So) ---------------
+
+def generate_weekend_overnight_pairs():
+    """
+    Fr->Sa und Sa->So Paare fuer die naechsten 4 Wochen.
+    Nur 1 Nacht Aufenthalt.
+    """
+    today = date.today()
+    pairs = []
+    for i in range(1, 29):  # 4 Wochen
+        d = today + timedelta(days=i)
+        if d.weekday() in (4, 5):   # Freitag (4) oder Samstag (5)
+            ret = d + timedelta(days=1)
+            label = "Fr -> Sa" if d.weekday() == 4 else "Sa -> So"
+            pairs.append({"outbound": d, "return": ret, "label": label})
+    return pairs
+
+
+def parse_dep_minutes(time_str):
+    """
+    Parst Abflugzeit-String ('6:30 AM', '14:30', '06:30') zu Minuten seit Mitternacht.
+    Gibt None zurueck wenn nicht parsebar.
+    """
+    if not time_str:
+        return None
+    s = time_str.strip()
+    for fmt in ["%I:%M %p", "%I:%M%p", "%H:%M", "%I %p"]:
+        try:
+            t = datetime.strptime(s, fmt)
+            return t.hour * 60 + t.minute
+        except ValueError:
+            continue
+    return None
+
+
+def search_weekend_flights():
+    """
+    Sucht 1-Nacht-Wochenendtrips.
+    Pro Datumspaar: bevorzugt Fruehfluege (Abflug vor 09:30),
+    faellt auf guenstigsten zurueck wenn keiner frueh genug.
+    """
+    pairs   = generate_weekend_overnight_pairs()
+    results = []
+    print(f"Wochenend-Scan: {len(pairs)} Datumspaare (naechste 4 Wochen)...")
+
+    for pair in pairs:
+        out_str = pair["outbound"].strftime("%Y-%m-%d")
+        ret_str = pair["return"].strftime("%Y-%m-%d")
+        print(f"  {pair['label']}  {out_str} -> {ret_str}...", end=" ", flush=True)
+
+        try:
+            result = get_flights(
+                flight_data=[
+                    FlightData(date=out_str, from_airport=ORIGIN,      to_airport=DESTINATION),
+                    FlightData(date=ret_str, from_airport=DESTINATION, to_airport=ORIGIN),
+                ],
+                trip="round-trip",
+                seat="economy",
+                passengers=Passengers(adults=1),
+            )
+
+            candidates = []
+            for flight in result.flights:
+                price = parse_price(flight.price)
+                if price is None:
+                    continue
+                dep_min = parse_dep_minutes(flight.departure)
+                candidates.append({
+                    "price":      price,
+                    "flight":     flight,
+                    "outbound":   pair["outbound"],
+                    "return":     pair["return"],
+                    "is_weekend": True,
+                    "duration":   1,
+                    "market":     result.current_price,
+                    "label":      pair["label"],
+                    "dep_min":    dep_min,
+                })
+
+            if not candidates:
+                print("keine Ergebnisse")
+                continue
+
+            # Fruehfluege (Abflug vor 09:30) bevorzugen
+            EARLY_CUTOFF = 9 * 60 + 30   # 09:30
+            early = [c for c in candidates if c["dep_min"] is not None and c["dep_min"] <= EARLY_CUTOFF]
+            pool  = early if early else candidates
+
+            pool.sort(key=lambda x: x["price"])
+            best = pool[0]
+            results.append(best)
+            early_tag = " (Fruehflug)" if early else " (kein Fruehflug verfuegbar)"
+            print(f"{best['price']:.0f}EUR  {best['flight'].departure}{early_tag}")
+
+        except Exception as e:
+            print(f"Fehler: {e}")
+
+        time.sleep(0.8)
+
+    results.sort(key=lambda x: x["price"])
+    return results
+
+
+def format_weekend_deal(deal, rank=None):
+    """Formatiert einen Wochenend-Deal mit Zeithinweis."""
+    f        = deal["flight"]
+    price    = deal["price"]
+    out_date = deal["outbound"]
+    ret_date = deal["return"]
+    market   = deal["market"]
+    label    = deal.get("label", "")
+
+    prefix       = f"#{rank} " if rank else ""
+    market_emoji = {"low": "🟢", "typical": "🟡", "high": "🔴"}.get(market, "⚪")
+    ahead        = f" (+{f.arrival_time_ahead})" if f.arrival_time_ahead else ""
+    delay        = f"\n  ⚠️ {f.delay}" if f.delay else ""
+    link         = make_google_flights_url(out_date, ret_date)
+
+    dep_min  = deal.get("dep_min")
+    time_tag = ""
+    if dep_min is not None:
+        if dep_min <= 9 * 60 + 30:
+            time_tag = "  ✅ Frühflug"
+        else:
+            h, m = divmod(dep_min, 60)
+            time_tag = f"  ⚠️ Abflug {h:02d}:{m:02d} (nicht früh)"
+
+    lines = [
+        f"{prefix}*{price:.0f}€* – {f.name}  {market_emoji}",
+        f"  📅 {label}  {weekday_de(out_date)} {out_date.strftime('%d.%m.')} -> "
+        f"{weekday_de(ret_date)} {ret_date.strftime('%d.%m.')}  (1 Nacht)",
+        f"  ✈️ Hinflug:  {f.departure} -> {f.arrival}{ahead}{time_tag}",
+        f"  ⏱ {f.duration}  |  {stops_label(f.stops)}{delay}",
+        f"  ℹ️ Rückflug: im Link prüfen (Ziel: ab 11:00 Uhr)",
+        f"  🔗 [Google Flights öffnen]({link})",
+    ]
+    return "\n".join(lines)
+
+
+def run_weekend():
+    """
+    Wochenend-Kurztrip Scanner: Fr->Sa und Sa->So, naechste 4 Wochen.
+    Fruehfluege bevorzugt. Alert wenn unter WEEKEND_PRICE_THRESHOLD.
+    """
+    print(f"Modus: Wochenend-Kurztrip (Limit: {WEEKEND_PRICE_THRESHOLD:.0f}€)")
+    deals   = search_weekend_flights()
+    now_str = datetime.now(tz=timezone.utc).strftime("%d.%m.%Y")
+
+    if not deals:
+        send_telegram(
+            f"🔍 *24h Malle Checker {now_str}*\n"
+            f"Keine 24h Malle-Flüge STR->PMI in den nächsten 4 Wochen gefunden."
+        )
+        return
+
+    cheapest = deals[0]["price"]
+    top5     = deals[:5]
+
+    header = [
+        f"🏖 *24h Malle Checker {now_str}*",
+        f"STR -> PMI -> STR  |  1 Nacht  |  Fr->Sa oder Sa->So",
+        f"Nächste 4 Wochen  |  Frühflüge bevorzugt  |  Alle Airlines\n",
+    ]
+    body = []
+    for i, deal in enumerate(top5, 1):
+        body.append(format_weekend_deal(deal, rank=i))
+        body.append("")
+
+    footer = []
+    if cheapest < WEEKEND_PRICE_THRESHOLD:
+        footer.append(
+            f"🚨 *GÜNSTIG!* {cheapest:.0f}€ liegt unter deinem Limit von {WEEKEND_PRICE_THRESHOLD:.0f}€!"
+        )
+
+    send_telegram("\n".join(header + body + footer))
+
+    # Alert-Datei fuer Cooldown (separater Key vom normalen Alert-Workflow)
+    if cheapest < WEEKEND_PRICE_THRESHOLD:
+        with open("weekend_alert_triggered.txt", "w") as fh:
+            fh.write(f"{cheapest:.2f}\n{datetime.now(tz=timezone.utc).isoformat()}\n")
+        print("weekend_alert_triggered.txt geschrieben (GitHub Cooldown)")
+
+
 # --- Entry Point -------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -362,6 +546,8 @@ if __name__ == "__main__":
         run_summary()
     elif MODE == "alert":
         run_alert()
+    elif MODE == "weekend":
+        run_weekend()
     else:
-        print(f"Unbekannter Modus: '{MODE}'. Verwende 'summary' oder 'alert'.")
+        print(f"Unbekannter Modus: '{MODE}'. Verwende 'summary', 'alert' oder 'weekend'.")
         sys.exit(1)
