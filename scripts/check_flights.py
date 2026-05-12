@@ -188,7 +188,8 @@ def search_all_flights(mode="summary"):
 # --- Hilfsfunktionen ---------------------------------------------------------
 
 def parse_price(price_str):
-    """Extrahiert float aus '€89', '1.234 €', '89,50 EUR' etc."""
+    """Extrahiert float aus '€89', '1.234 €', '89,50 EUR' etc.
+    Gibt None zurueck fuer 0€ oder ungueltige Preise (Datenfehler)."""
     if not price_str:
         return None
     cleaned = re.sub(r"[^\d.,]", "", price_str).replace(",", ".")
@@ -198,7 +199,10 @@ def parse_price(price_str):
     elif len(parts) == 2 and len(parts[1]) == 3:
         cleaned = "".join(parts)
     try:
-        return float(cleaned)
+        price = float(cleaned)
+        if price <= 0:
+            return None  # 0€-Preise ignorieren (Datenfehler)
+        return price
     except ValueError:
         return None
 
